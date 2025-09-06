@@ -1103,6 +1103,7 @@ chromium-metrics-reviews@google.com.
   <int value="8" label="PEDAL_SUGGESTION"/>
   <int value="9" label="DIVIDER_LINE"/>
   <int value="10" label="QUERY_TILES"/>
+  <int value="11" label="AI_SUGGESTIONS"/>
 </enum>
 
 <enum name="PageSummaryModelDownloadEvents">

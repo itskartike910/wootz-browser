@@ -259,6 +259,18 @@ class AutocompleteMediator
         return mDropdownViewInfoListBuilder;
     }
 
+    /**
+     * Refresh the suggestions list when AI suggestions need to be updated.
+     * This is called when the AI suggestion debounce completes.
+     */
+    void refreshSuggestionsList() {
+        if (mIsActive && !mAutocompleteResult.getSuggestionsList().isEmpty()) {
+            var viewInfoList =
+                    mDropdownViewInfoListBuilder.buildDropdownViewInfoList(mAutocompleteResult);
+            mDropdownViewInfoListManager.setSourceViewInfoList(viewInfoList);
+        }
+    }
+
     public void destroy() {
         if (mAutocomplete != null) {
             stopAutocomplete(false);
@@ -786,6 +798,11 @@ class AutocompleteMediator
             return url;
         }
 
+        // Don't update URLs for custom schemes (like wootzapp://) - these are handled by AI suggestions
+        if (url.getScheme() != null && !url.getScheme().equals("http") && !url.getScheme().equals("https")) {
+            return url;
+        }
+
         GURL updatedUrl =
                 mAutocomplete.updateMatchDestinationUrlWithQueryFormulationTime(
                         suggestion, getElapsedTimeSinceInputChange());
@@ -799,6 +816,9 @@ class AutocompleteMediator
      */
     public void onTextChanged(@NonNull String textWithoutAutocomplete) {
         if (mShouldPreventOmniboxAutocomplete) return;
+
+        // Update the AI suggestion processor with the current query
+        mDropdownViewInfoListBuilder.updateAiQuery(textWithoutAutocomplete);
 
         mIgnoreOmniboxItemSelection = true;
         cancelAutocompleteRequests();
