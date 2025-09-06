@@ -15,6 +15,7 @@ import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.omnibox.UrlBarEditingTextStateProvider;
 import org.chromium.chrome.browser.omnibox.styles.OmniboxImageSupplier;
 import org.chromium.chrome.browser.omnibox.suggestions.answer.AnswerSuggestionProcessor;
+import org.chromium.chrome.browser.omnibox.suggestions.ai.AiSuggestionProcessor;
 import org.chromium.chrome.browser.omnibox.suggestions.basic.BasicSuggestionProcessor;
 import org.chromium.chrome.browser.omnibox.suggestions.basic.BasicSuggestionProcessor.BookmarkState;
 import org.chromium.chrome.browser.omnibox.suggestions.clipboard.ClipboardSuggestionProcessor;
@@ -49,6 +50,8 @@ class DropdownItemViewInfoListBuilder {
     private @Nullable Supplier<ShareDelegate> mShareDelegateSupplier;
     private @NonNull Optional<OmniboxImageSupplier> mImageSupplier;
     private @NonNull BookmarkState mBookmarkState;
+    private @Nullable AiSuggestionProcessor mAiSuggestionProcessor;
+    private @Nullable SuggestionHost mSuggestionHost;
 
     DropdownItemViewInfoListBuilder(
             @NonNull Supplier<Tab> tabSupplier, @NonNull BookmarkState bookmarkState) {
@@ -71,6 +74,7 @@ class DropdownItemViewInfoListBuilder {
             @NonNull UrlBarEditingTextStateProvider textProvider) {
         assert mPriorityOrderedSuggestionProcessors.size() == 0 : "Processors already initialized.";
 
+        mSuggestionHost = host;
         final Supplier<ShareDelegate> shareSupplier =
                 () -> mShareDelegateSupplier == null ? null : mShareDelegateSupplier.get();
 
@@ -86,6 +90,17 @@ class DropdownItemViewInfoListBuilder {
                         context, host, mImageSupplier, mActivityTabSupplier, shareSupplier));
         registerSuggestionProcessor(
                 new AnswerSuggestionProcessor(context, host, textProvider, mImageSupplier));
+        // Register AI suggestion processor first to show AI suggestions at the top
+        mAiSuggestionProcessor = new AiSuggestionProcessor(context, host, mImageSupplier);
+        // Set up the refresh callback to trigger suggestion list updates
+        mAiSuggestionProcessor.setRefreshCallback(() -> {
+            // This will be called when the debounce completes
+            // Trigger a refresh of the suggestions list
+            if (mSuggestionHost instanceof AutocompleteMediator) {
+                ((AutocompleteMediator) mSuggestionHost).refreshSuggestionsList();
+            }
+        });
+        registerSuggestionProcessor(mAiSuggestionProcessor);
         registerSuggestionProcessor(
                 new ClipboardSuggestionProcessor(context, host, mImageSupplier));
         registerSuggestionProcessor(
@@ -309,6 +324,11 @@ class DropdownItemViewInfoListBuilder {
         }
 
         var newMatches = autocompleteResult.getSuggestionsList();
+        
+        // Pass current suggestions to AI processor for description generation
+        if (mAiSuggestionProcessor != null) {
+            mAiSuggestionProcessor.setCurrentSuggestions(newMatches);
+        }
         int newMatchesCount = newMatches.size();
         var viewInfoList = new ArrayList<DropdownItemViewInfo>();
         var currentGroupMatches = new ArrayList<AutocompleteMatch>();
@@ -383,5 +403,25 @@ class DropdownItemViewInfoListBuilder {
         // Crash intentionally. This should never happen.
         assert false : "No default handler for suggestions";
         return null;
+    }
+
+    /**
+     * Update the query in the AI suggestion processor to control when AI suggestions are shown.
+     *
+     * @param query The current query text from the omnibox.
+     */
+    void updateAiQuery(String query) {
+        if (mAiSuggestionProcessor != null) {
+            mAiSuggestionProcessor.updateQuery(query);
+        }
+    }
+
+    /**
+     * Get the AI suggestion processor for external access.
+     *
+     * @return The AI suggestion processor instance.
+     */
+    AiSuggestionProcessor getAiSuggestionProcessor() {
+        return mAiSuggestionProcessor;
     }
 }

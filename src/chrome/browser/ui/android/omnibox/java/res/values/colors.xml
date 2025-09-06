@@ -45,4 +45,9 @@ found in the LICENSE file.
 
     <color name="omnibox_suggestion_bg_incognito">@color/default_bg_color_dark</color>
     <color name="omnibox_dropdown_bg_incognito">@color/default_bg_color_dark_elev_3_baseline</color>
+
+    <!-- AI Suggestion colors -->
+    <color name="ai_suggestion_background">#FFF8F0</color>
+    <color name="ai_suggestion_text_color">#1A1A1A</color>
+    <color name="ai_suggestion_subtext_color">#424242</color>
 </resources>

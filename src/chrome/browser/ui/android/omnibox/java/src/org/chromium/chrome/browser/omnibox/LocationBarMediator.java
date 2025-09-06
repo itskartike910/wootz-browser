@@ -20,6 +20,7 @@ import android.view.View;
 import android.view.View.MeasureSpec;
 import android.view.View.OnKeyListener;
 import android.widget.TextView;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -551,6 +552,46 @@ class LocationBarMediator
         }
 
         String url = omniboxLoadUrlParams.url;
+        String userQuery = mUrlCoordinator.getTextWithoutAutocomplete();
+        Log.e("Kartik", "start");
+        Log.e("Kartik", "url: " + url);
+        Log.e("Kartik", "userQuery: " + userQuery);
+        if (!userQuery.startsWith("https://") && !userQuery.startsWith("http://") && !url.startsWith("wootzapp://")) {
+            Log.e("Kartik", "in if");
+            try {
+                String encodedQuery = java.net.URLEncoder.encode(url, java.nio.charset.StandardCharsets.UTF_8);
+                String chatUrl = "wootzapp://chat/?q=" + userQuery;
+                Log.e("Kartik", "chatUrl: " + chatUrl);
+                Log.e("kKartik", "cencodedQuery"+encodedQuery);
+                // Create new OmniboxLoadUrlParams with chat URL
+                OmniboxLoadUrlParams chatLoadParams = new OmniboxLoadUrlParams.Builder(chatUrl, PageTransition.GENERATED)
+                        .setOpenInNewTab(false)
+                        .build();
+                
+                // Load the chat URL by creating LoadUrlParams and using the current tab
+                if (currentTab != null) {
+                    Log.e("Kartik", "currenttab");
+                    LoadUrlParams chatParams = new LoadUrlParams(chatUrl);
+                    chatParams.setTransitionType(PageTransition.GENERATED | PageTransition.FROM_ADDRESS_BAR);
+                    currentTab.loadUrl(chatParams);
+                    mLocaleManager.recordLocaleBasedSearchMetrics(false, chatUrl, PageTransition.GENERATED);
+                    PostTask.postTask(TaskTraits.UI_USER_VISIBLE, () -> focusCurrentTab());
+                }
+                return;
+            } catch (Exception e) {
+                // Fallback to basic chat URL without query
+                Log.e("Kartik", "exception " + e);
+                if (currentTab != null) {
+                    LoadUrlParams chatParams = new LoadUrlParams("wootzapp://chat/");
+                    chatParams.setTransitionType(PageTransition.GENERATED | PageTransition.FROM_ADDRESS_BAR);
+                    currentTab.loadUrl(chatParams);
+                    mLocaleManager.recordLocaleBasedSearchMetrics(false, "wootzapp://chat/", PageTransition.GENERATED);
+                    PostTask.postTask(TaskTraits.UI_USER_VISIBLE, () -> focusCurrentTab());
+                }
+                return;
+            }
+        }
+
         if (currentTab != null) {
             boolean isCurrentTabNtpUrl = UrlUtilities.isNtpUrl(currentTab.getUrl());
             if (currentTab.isNativePage() || isCurrentTabNtpUrl) {

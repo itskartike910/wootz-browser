@@ -836,7 +836,7 @@
             { 
               "name": "apiKey", 
               "type": "string", 
-              "description": "API key for the AI model"
+              "description": "API key for the AI model" 
             }
           ],
           "returns_async": {

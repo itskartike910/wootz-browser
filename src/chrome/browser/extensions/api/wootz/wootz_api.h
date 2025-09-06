@@ -438,7 +438,7 @@ class WootzMaskSensitiveElementsFunction : public ExtensionFunction {
   
   // WeakPtr factory for safe async operations (must be last member)
   base::WeakPtrFactory<WootzMaskSensitiveElementsFunction> weak_factory_{this};
-};
+ };
 
 class WootzChangeWootzAppSearchConfigurationFunction : public ExtensionFunction {
  public:

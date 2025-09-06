@@ -89,6 +89,7 @@
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 
 
+
 namespace extensions {
 
 const char kWootzAppSearchAIModelName[] = "wootzapp_search_ai_model_name";
@@ -1863,9 +1864,8 @@ void WootzMaskSensitiveElementsFunction::SendSelectorsToRenderer(const std::vect
     base::BindOnce(&WootzMaskSensitiveElementsFunction::OnMaskingComplete,
                    weak_factory_.GetWeakPtr()));
 }
-
+  
 ExtensionFunction::ResponseAction WootzChangeWootzAppSearchConfigurationFunction::Run(){
-
   if(args().size() != 3 || !args()[0].is_string() || !args()[1].is_string() || !args()[2].is_string()) {
     LOG(ERROR)<<"Invalid Arguments";
     return RespondNow(Error("Invalid arguments"));

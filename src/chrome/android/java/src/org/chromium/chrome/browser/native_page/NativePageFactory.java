@@ -43,6 +43,7 @@ import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tasks.HomeSurfaceTracker;
 import org.chromium.chrome.browser.toolbar.top.Toolbar;
+import org.chromium.chrome.browser.wootzapp_search.AiSearchPage;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.ui.native_page.NativePage;
 import org.chromium.chrome.browser.ui.native_page.NativePage.NativePageType;
@@ -285,6 +286,13 @@ public class NativePageFactory {
             return NativePageFactory.buildPdfPage(
                     url, tab, pdfInfo, mBrowserControlsManager, mTabModelSelector, mActivity);
         }
+
+        protected NativePage buildAiChatPage(Tab tab, String url) {
+            return new AiSearchPage(
+                mActivity,
+                new TabShim(tab, mBrowserControlsManager, mTabModelSelector),
+                url);
+        }
     }
 
     /**
@@ -334,6 +342,9 @@ public class NativePageFactory {
                 break;
             case NativePageType.PDF:
                 page = getBuilder().buildPdfPage(tab, url, pdfInfo);
+                break;
+            case NativePageType.AI_CHAT:
+                page = getBuilder().buildAiChatPage(tab, url);
                 break;
             default:
                 assert false;

@@ -78,7 +78,7 @@ public class PreWarmingRecycledViewPool extends RecycledViewPool {
         setMaxRecycledViews(OmniboxSuggestionUiType.EDIT_URL_SUGGESTION, 1);
         setMaxRecycledViews(OmniboxSuggestionUiType.ANSWER_SUGGESTION, 1);
         setMaxRecycledViews(OmniboxSuggestionUiType.ENTITY_SUGGESTION, 8);
-
+        setMaxRecycledViews(OmniboxSuggestionUiType.AI_SUGGESTION, 6);
         setMaxRecycledViews(OmniboxSuggestionUiType.TAIL_SUGGESTION, 15);
         setMaxRecycledViews(OmniboxSuggestionUiType.CLIPBOARD_SUGGESTION, 1);
         setMaxRecycledViews(OmniboxSuggestionUiType.HEADER, 4);

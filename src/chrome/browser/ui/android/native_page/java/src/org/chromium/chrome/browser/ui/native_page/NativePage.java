@@ -107,7 +107,8 @@ public interface NativePage {
         NativePageType.HISTORY,
         NativePageType.EXPLORE,
         NativePageType.MANAGEMENT,
-        NativePageType.PDF
+        NativePageType.PDF,
+        NativePageType.AI_CHAT
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface NativePageType {
@@ -121,6 +122,7 @@ public interface NativePage {
         int EXPLORE = 7;
         int MANAGEMENT = 8;
         int PDF = 9;
+        int AI_CHAT = 10;
     }
 
     /**
@@ -213,6 +215,8 @@ public interface NativePage {
             return NativePageType.EXPLORE;
         } else if (UrlConstants.MANAGEMENT_HOST.equals(host)) {
             return NativePageType.MANAGEMENT;
+        } else if (UrlConstants.AI_CHAT_HOST.equals(host)) {
+            return NativePageType.AI_CHAT;
         } else {
             return NativePageType.NONE;
         }

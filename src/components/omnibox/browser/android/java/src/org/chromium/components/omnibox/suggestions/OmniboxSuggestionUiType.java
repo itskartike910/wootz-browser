@@ -31,7 +31,8 @@ import java.lang.annotation.RetentionPolicy;
     OmniboxSuggestionUiType.TILE_NAVSUGGEST,
     OmniboxSuggestionUiType.GROUP_SEPARATOR,
     OmniboxSuggestionUiType.QUERY_TILES,
-    OmniboxSuggestionUiType.COUNT
+    OmniboxSuggestionUiType.COUNT,
+    OmniboxSuggestionUiType.AI_SUGGESTION
 })
 @Retention(RetentionPolicy.SOURCE)
 public @interface OmniboxSuggestionUiType {
@@ -47,4 +48,5 @@ public @interface OmniboxSuggestionUiType {
     int QUERY_TILES = 9;
 
     int COUNT = 10;
+    int AI_SUGGESTION = 11;
 }
