@@ -1060,6 +1060,7 @@ __pycache__/
 !src/chrome/android/java/res/xml/wootz_solana_preferences.xml
 !src/chrome/android/java/res/xml/wootz_wallet_networks_preference.xml
 !src/chrome/android/java/res/xml/wootz_wallet_preferences.xml
+!src/chrome/android/java/res/xml/auto_download_pages_preferences.xml
 !src/chrome/android/java/src/org/chromium/base/
 !src/chrome/android/java/src/org/chromium/chrome/browser/BrandingConfig.java
 !src/chrome/android/java/src/org/chromium/chrome/browser/BrandingManager.java
@@ -1070,6 +1071,7 @@ __pycache__/
 !src/chrome/android/java/src/org/chromium/chrome/browser/app/TabletMode.java
 !src/chrome/android/java/src/org/chromium/chrome/browser/app/domain/
 !src/chrome/android/java/src/org/chromium/chrome/browser/app/helpers/
+!src/chrome/android/java/src/org/chromium/chrome/browser/autodownload/
 !src/chrome/android/java/src/org/chromium/chrome/browser/browserservices/WootzAppBackgroundContentService.java
 !src/chrome/android/java/src/org/chromium/chrome/browser/browserservices/WootzAppBackgroundService.java
 !src/chrome/android/java/src/org/chromium/chrome/browser/custom_layout/
@@ -1106,6 +1108,7 @@ __pycache__/
 !src/chrome/browser/android/extension_developer_mode_settings_bridge.h
 !src/chrome/browser/android/extension_developer_mode_settings_prefs.cc
 !src/chrome/browser/android/extension_developer_mode_settings_prefs.h
+!src/chrome/browser/android/autodownload/
 !src/chrome/browser/domain_blocking/
 !src/chrome/browser/extensions/api/wootz/
 !src/chrome/browser/extensions/extensions_android.cc

@@ -27,6 +27,7 @@ import org.chromium.chrome.browser.sync.settings.ManageSyncSettings;
 import org.chromium.components.browser_ui.settings.SettingsLauncher;
 import org.chromium.components.browser_ui.site_settings.SiteSettings;
 import org.chromium.chrome.browser.tracing.settings.ExtensionDeveloperModeSettings;
+import org.chromium.chrome.browser.autodownload.settings.AutoDownloadSettings;
 
 /** Implementation class for launching a {@link SettingsActivity}. */
 public class SettingsLauncherImpl implements SettingsLauncher {
@@ -68,6 +69,8 @@ public class SettingsLauncherImpl implements SettingsLauncher {
             case SettingsFragment.PASSWORDS:
             case SettingsFragment.GOOGLE_SERVICES:
             case SettingsFragment.MANAGE_SYNC:
+            case SettingsFragment.EXTENSION_DEVELOPER_MODE:
+            case SettingsFragment.AUTO_DOWNLOAD_PAGES:
                 break;
         }
         launchSettingsActivity(context, getFragmentClassFromEnum(settingsFragment), fragmentArgs);
@@ -146,6 +149,8 @@ public class SettingsLauncherImpl implements SettingsLauncher {
                 return ManageSyncSettings.class;
             case SettingsFragment.EXTENSION_DEVELOPER_MODE:
                 return ExtensionDeveloperModeSettings.class;
+            case SettingsFragment.AUTO_DOWNLOAD_PAGES:
+                return AutoDownloadSettings.class;
         }
         assert false;
         return null;

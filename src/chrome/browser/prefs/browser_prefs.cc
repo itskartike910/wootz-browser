@@ -21,6 +21,7 @@
 #include "chrome/browser/accessibility/invert_bubble_prefs.h"
 #include "chrome/browser/accessibility/prefers_default_scrollbar_styles_prefs.h"
 #include "chrome/browser/android/extension_developer_mode_settings_prefs.h"
+#include "chrome/browser/android/autodownload/settings/auto_download_settings_prefs.h"
 #include "chrome/browser/browser_process_impl.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/chromeos/enterprise/cloud_storage/policy_utils.h"
@@ -1928,6 +1929,7 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
   AccessibilityUIMessageHandler::RegisterProfilePrefs(registry);
   action_url::prefs::RegisterProfilePrefs(registry);
   extension_developer_mode_settings::RegisterProfilePrefs(registry);
+  auto_download_settings::RegisterProfilePrefs(registry);
   AnnouncementNotificationService::RegisterProfilePrefs(registry);
   autofill::prefs::RegisterProfilePrefs(registry);
   blocked_domains::prefs::RegisterProfilePrefs(registry);

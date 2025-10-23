@@ -5117,6 +5117,21 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the WootzApp
       <message name="IDS_MENU_DOWNLOADS" desc="Menu item for opening the downloads page. [CHAR_LIMIT=27]">
         Downloads
       </message>      
+      <message name="IDS_AUTO_DOWNLOAD_PAGES" desc="Menu item for opening the auto downloaded pages page. [CHAR_LIMIT=27]">
+        Auto Download Pages
+      </message>
+      <message name="IDS_AUTO_DOWNLOAD_PAGES_TOGGLE_LABEL" desc="Label for the toggle to enable auto-download pages feature. [CHAR_LIMIT=32]">
+        Enable auto-download pages
+      </message>
+      <message name="IDS_AUTO_DOWNLOAD_PAGES_DISABLED_DESCRIPTION" desc="Description text shown when auto-download pages is disabled.">
+        Auto-download is disabled. Enable it to automatically save pages as HTML/MHTML files for offline viewing and easy sharing.
+      </message>
+      <message name="IDS_AUTO_DOWNLOAD_PAGES_ENABLED_DESCRIPTION" desc="Description text shown when auto-download pages is enabled.">
+        Auto-download is enabled. Pages will be automatically saved as HTML/MHTML files for offline viewing and easy sharing.
+      </message>
+      <message name="IDS_AUTO_DOWNLOAD_PAGE_SAVED_TOAST" desc="Toast message shown when a page is successfully saved for offline viewing. [CHAR_LIMIT=50]">
+        Page saved for offline use.
+      </message>
       <message name="IDS_MENU_DEVELOPER_MODE" desc="Menu item for opening the developer mode page. [CHAR_LIMIT=27]">
         Extension Developer Mode
       </message>

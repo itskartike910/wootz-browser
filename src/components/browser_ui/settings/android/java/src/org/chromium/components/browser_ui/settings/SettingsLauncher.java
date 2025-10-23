@@ -27,7 +27,9 @@ public interface SettingsLauncher {
         SettingsFragment.ACCESSIBILITY,
         SettingsFragment.PASSWORDS,
         SettingsFragment.GOOGLE_SERVICES,
-        SettingsFragment.MANAGE_SYNC
+        SettingsFragment.MANAGE_SYNC,
+        SettingsFragment.EXTENSION_DEVELOPER_MODE,
+        SettingsFragment.AUTO_DOWNLOAD_PAGES
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface SettingsFragment {
@@ -53,6 +55,8 @@ public interface SettingsLauncher {
         int MANAGE_SYNC = 9;
         /// Extension developer settings.
         int EXTENSION_DEVELOPER_MODE = 10;
+        /// Auto download pages settings.
+        int AUTO_DOWNLOAD_PAGES = 11;
     }
 
     /**
