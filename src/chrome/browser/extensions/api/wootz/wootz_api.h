@@ -459,5 +459,16 @@ class WootzCaptureScreenshotFunction : public ExtensionFunction {
   ResponseAction Run() override;
 };
 
+class WootzSetAutoDownloadPagesFunction : public ExtensionFunction {
+ public:
+  WootzSetAutoDownloadPagesFunction() = default;
+  DECLARE_EXTENSION_FUNCTION("wootz.setAutoDownloadPages",
+                             WOOTZ_SET_AUTODOWNLOAD_PAGES)
+ protected:
+  ~WootzSetAutoDownloadPagesFunction() override = default;
+  ResponseAction Run() override;
+};
+
+
 }  // namespace extensions
 #endif  // CHROME_BROWSER_EXTENSIONS_API_WOOTZ_WOOTZ_API_H_

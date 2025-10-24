@@ -38,6 +38,7 @@
 #include "components/search_engines/template_url_service.h"
 #include "components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.h"
 #include "components/subresource_filter/core/browser/subresource_filter_prefs.h"
+#include "chrome/browser/android/autodownload/settings/auto_download_settings_prefs.h"
 #include "components/wootz_wallet/browser/eth_tx_manager.h"
 #include "components/wootz_wallet/browser/tx_meta.h"
 #include "components/wootz_wallet/browser/tx_service.h"
@@ -1918,6 +1919,26 @@ ExtensionFunction::ResponseAction WootzCaptureScreenshotFunction::Run() {
   result.Set("success", true);
   result.Set("message", "Screenshot capture initiated");
 
+  return RespondNow(WithArguments(std::move(result)));
+}
+
+ExtensionFunction::ResponseAction WootzSetAutoDownloadPagesFunction::Run() {
+  // Validate arguments
+  if (args().empty() || !args()[0].is_bool()) {
+    return RespondNow(Error("Missing or invalid 'enabled' argument"));
+  }
+  bool enabled = args()[0].GetBool();
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  if (!profile) {
+    return RespondNow(Error("No profile found"));
+  }
+
+  profile->GetPrefs()->SetBoolean(
+      auto_download_settings::kAutoDownloadPagesEnabled, enabled);
+
+  base::Value::Dict result;
+  result.Set("success", true);
   return RespondNow(WithArguments(std::move(result)));
 }
 

@@ -871,6 +871,30 @@
               }
             ]
           }
+        },
+        {
+          "name": "setAutoDownloadPages",
+          "type": "function",
+          "description": "Enables or disables the auto-download pages feature.",
+          "parameters": [
+            {
+              "name": "enabled",
+              "type": "boolean",
+              "description": "True to enable, false to disable."
+            }
+          ],
+          "returns_async": {
+            "name": "callback",
+            "parameters": [
+              {
+                "name": "result",
+                "type": "object",
+                "properties": {
+                  "success": { "type": "boolean" }
+                }
+              }
+            ]
+          }
         }
       ],
       "events": [
