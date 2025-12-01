@@ -4,14 +4,22 @@
 
 #include "chrome/browser/wootz_offline_pages/wootz_offline_page_service.h"
 
+#include <set>
+
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/hash/sha1.h"
+#include "base/json/json_writer.h"
+#include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
+#include "base/time/time.h"
+#include "base/values.h"
 #include "chrome/browser/wootz_offline_pages/wootz_mhtml_to_html_converter.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/public/common/mhtml_generation_params.h"
@@ -115,29 +123,15 @@ void WootzOfflinePageService::OnMHTMLGenerated(
       LOG(WARNING) << "Kartik: Failed to delete temporary MHTML file: " << file_path.value();
     }
     
-    LOG(INFO) << "Kartik: Offline page saved as HTML: " << html_path.value();
+    // Get the actual file size after conversion
+    int64_t html_size = 0;
+    base::GetFileSize(html_path, &html_size);
     
-    // CRITICAL: Save the same HTML for ALL URLs in the redirect chain
-    // This ensures that accessing any intermediate redirect URL will find the page
-    if (redirect_chain.size() > 1) {
-      LOG(INFO) << "Kartik: Creating copies for " << (redirect_chain.size() - 1) 
-                << " redirect URLs in the chain";
-      
-      // The last URL in redirect_chain is the final destination (already saved above)
-      // Create copies for all intermediate redirect URLs
-      for (size_t i = 0; i < redirect_chain.size() - 1; i++) {
-        const GURL& redirect_url = redirect_chain[i];
-        base::FilePath redirect_path = URLToFilePath(redirect_url);
-        
-        // Copy the HTML file to the redirect URL's path
-        if (base::CopyFile(html_path, redirect_path)) {
-          LOG(INFO) << "Kartik: Saved redirect URL: " << redirect_url.spec()
-                    << " -> " << redirect_path.value();
-        } else {
-          LOG(ERROR) << "Kartik: Failed to save redirect URL: " << redirect_url.spec();
-        }
-      }
-    }
+    LOG(INFO) << "Kartik: Offline page saved as HTML: " << html_path.value()
+              << " (size: " << html_size << " bytes)";
+    
+    // Update unified session manifest with this page and its redirect chain
+    UpdateSessionManifest(html_path, redirect_chain, html_size);
   } else {
     LOG(ERROR) << "Kartik: Failed to convert MHTML to HTML, keeping MHTML file as fallback";
     // Keep the MHTML file if conversion fails
@@ -151,12 +145,20 @@ bool WootzOfflinePageService::GetOfflinePagePath(const GURL& url,
   
   // First, check if the file exists at the direct path
   if (base::PathExists(*path)) {
+    LOG(INFO) << "Kartik: Found offline page at direct path: " << path->value();
+    return true;
+  }
+  
+  // Second, search session manifest for URL mappings (handles redirects efficiently)
+  LOG(INFO) << "Kartik: File not found at direct path, checking session manifest...";
+  if (FindPagePathFromSessionManifest(url, path)) {
+    LOG(INFO) << "Kartik: Found page via session manifest: " << path->value();
     return true;
   }
   
   // If not found in the main directory, search subdirectories
   // This handles cases where users copy exported directories back
-  LOG(INFO) << "Kartik: File not found at direct path, searching subdirectories...";
+  LOG(INFO) << "Kartik: Not found in manifests, searching subdirectories...";
   
   // Extract just the filename from the full path
   std::string filename = path->BaseName().AsUTF8Unsafe();
@@ -176,7 +178,7 @@ bool WootzOfflinePageService::GetOfflinePagePath(const GURL& url,
     return true;
   }
   
-  LOG(INFO) << "Kartik: Offline page not found in main directory or subdirectories";
+  LOG(INFO) << "Kartik: Offline page not found anywhere";
   return false;
 }
 
@@ -238,11 +240,77 @@ base::FilePath WootzOfflinePageService::GetStorageDir() {
   return path;
 }
 
+GURL WootzOfflinePageService::CanonicalizeUrlForOfflinePage(const GURL& url) {
+  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
+    return url;
+  }
+  
+  std::string path = url.path();
+  
+  // Step 1: Check if this is a search page (any site)
+  // Search pages include: /search, /results, /find, etc.
+  bool is_search_page = (path.find("/search") != std::string::npos ||
+                         path.find("/results") != std::string::npos ||
+                         path.find("/find") != std::string::npos);
+  
+  // Also check query parameters for common search indicators
+  if (url.has_query() && !is_search_page) {
+    std::string query = url.query();
+    is_search_page = (query.find("q=") != std::string::npos ||
+                     query.find("query=") != std::string::npos ||
+                     query.find("search=") != std::string::npos ||
+                     query.find("keyword=") != std::string::npos ||
+                     query.find("keywords=") != std::string::npos); 
+  }
+  
+  LOG(INFO) << "Kartik: [URL CANONICALIZATION] " << url.spec() 
+            << " -> is_search_page: " << (is_search_page ? "YES" : "NO");
+  
+  GURL::Replacements replacements;
+  
+  // if (is_search_page) {
+  //   // Keep query parameters for search pages - different searches are different pages
+  //   // Only strip fragment/anchor
+  //   replacements.ClearRef();
+  // } else {
+    // Strip query parameters AND fragment for non-search pages
+    // Example: /home?trk=a#section and /home?trk=b#other -> /home (same page)
+    replacements.ClearQuery();
+    replacements.ClearRef();
+  // }
+  
+  GURL canonical = url.ReplaceComponents(replacements);
+  
+  // Step 2: Normalize trailing slash AFTER stripping query params
+  // This ensures consistent hashing whether URL has query params or not
+  // Example: /home and /home?trk=a both become /home (no slash)
+  // Example: /jobs/ and /jobs/?trk=a both become /jobs/ (with slash)
+  std::string canonical_path = canonical.path();
+  
+  // Don't modify if path is empty, is root (/), or already ends with slash
+  // Don't add slash if path looks like a file (has extension)
+  bool looks_like_file = (canonical_path.find_last_of('.') != std::string::npos &&
+                          canonical_path.find_last_of('.') > canonical_path.find_last_of('/'));
+  
+  // For consistency: if path doesn't end with / and is not a file, DON'T add slash
+  // This matches most saved URLs which typically don't have trailing slashes
+  // Just return as-is after query/fragment stripping
+  
+  return canonical;
+}
+
 base::FilePath WootzOfflinePageService::URLToFilePath(const GURL& url) {
-  std::string hash = base::SHA1HashString(url.spec());
+  // Use canonical URL for consistent file naming
+  GURL canonical = CanonicalizeUrlForOfflinePage(url);
+  
+  std::string hash = base::SHA1HashString(canonical.spec());
   std::string hex_hash = base::HexEncode(hash.c_str(), hash.length());
   // Changed from .mhtml to .html since we now convert and save as HTML
   std::string filename = "wootz_offline_" + hex_hash + ".html";
+  
+  LOG(INFO) << "Kartik: URL canonicalization: " << url.spec() 
+            << " -> " << canonical.spec() << " -> " << filename;
+  
   return GetStorageDir().Append(base::FilePath::FromUTF8Unsafe(filename));
 }
 
@@ -353,4 +421,444 @@ void WootzOfflinePageService::EnsureOffline404PageExists() {
   } else {
     LOG(ERROR) << "Kartik: Failed to create offline 404 page";
   }
+}
+
+base::FilePath WootzOfflinePageService::GetNoResultFoundPagePath() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jstring> j_path =
+      wootz_offline_pages::Java_WootzOfflinePagePathUtils_getNoResultFoundPagePath(env);
+  
+  if (j_path.is_null()) {
+    LOG(ERROR) << "Kartik: Failed to get no result found page path from Java";
+    return base::FilePath();
+  }
+  
+  std::string path_str = base::android::ConvertJavaStringToUTF8(env, j_path);
+  return base::FilePath(path_str);
+}
+
+bool WootzOfflinePageService::DoesNoResultFoundPageExist() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return wootz_offline_pages::Java_WootzOfflinePagePathUtils_doesNoResultFoundPageExist(env);
+}
+
+// ============================================================================
+// MULTI-MANIFEST SYSTEM
+// Supports multiple coexisting manifest files from different devices/sessions
+// ============================================================================
+
+// Helper: Create empty manifest with timestamp
+base::Value::Dict CreateEmptyManifest() {
+  base::Value::Dict manifest;
+  base::Time now = base::Time::Now();
+  base::Time::Exploded exploded;
+  now.UTCExplode(&exploded);
+  std::string timestamp = base::StringPrintf(
+      "%04d-%02d-%02dT%02d:%02d:%02dZ",
+      exploded.year, exploded.month, exploded.day_of_month,
+      exploded.hour, exploded.minute, exploded.second);
+  
+  manifest.Set("version", 1);
+  manifest.Set("session_started", timestamp);
+  manifest.Set("last_updated", timestamp);
+  manifest.Set("page_count", 0);
+  manifest.Set("url_mappings", base::Value::Dict());
+  manifest.Set("pages", base::Value::Dict());
+  
+  return manifest;
+}
+
+// Load a single manifest file (returns empty dict if invalid, doesn't delete)
+base::Value::Dict WootzOfflinePageService::LoadSingleManifest(
+    const base::FilePath& manifest_path) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  
+  if (!base::PathExists(manifest_path)) {
+    return base::Value::Dict();
+  }
+  
+  // Read manifest file
+  std::string manifest_content;
+  if (!base::ReadFileToString(manifest_path, &manifest_content)) {
+    LOG(WARNING) << "Kartik: [MANIFEST] Failed to read: " << manifest_path.BaseName().value()
+                 << " (skipping, not deleting)";
+    return base::Value::Dict();
+  }
+  
+  // Parse JSON
+  auto parsed = base::JSONReader::Read(manifest_content);
+  if (!parsed || !parsed->is_dict()) {
+    LOG(WARNING) << "Kartik: [MANIFEST] Invalid JSON in: " << manifest_path.BaseName().value()
+                 << " (skipping, not deleting - may be manually editable)";
+    return base::Value::Dict();
+  }
+  
+  LOG(INFO) << "Kartik: [MANIFEST] Successfully loaded: " << manifest_path.BaseName().value();
+  return std::move(parsed->GetDict());
+}
+
+// Load ALL session manifests from storage directory
+std::vector<base::Value::Dict> WootzOfflinePageService::LoadAllSessionManifests() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  
+  std::vector<base::Value::Dict> all_manifests;
+  base::FilePath storage_dir = GetStorageDir();
+  
+  if (!base::DirectoryExists(storage_dir)) {
+    LOG(INFO) << "Kartik: [MANIFEST] Storage directory doesn't exist yet";
+    return all_manifests;
+  }
+  
+  // Enumerate all session_manifest*.json files
+  base::FileEnumerator enumerator(
+      storage_dir,
+      false,  // non-recursive
+      base::FileEnumerator::FILES,
+      FILE_PATH_LITERAL("session_manifest*.json"));
+  
+  int total_found = 0;
+  int valid_count = 0;
+  int invalid_count = 0;
+  
+  for (base::FilePath manifest_path = enumerator.Next(); 
+       !manifest_path.empty(); 
+       manifest_path = enumerator.Next()) {
+    total_found++;
+    
+    base::Value::Dict manifest = LoadSingleManifest(manifest_path);
+    if (!manifest.empty()) {
+      all_manifests.push_back(std::move(manifest));
+      valid_count++;
+    } else {
+      invalid_count++;
+    }
+  }
+  
+  LOG(INFO) << "Kartik: [MANIFEST] Found " << total_found << " manifest files: "
+            << valid_count << " valid, " << invalid_count << " invalid (skipped)";
+  
+  return all_manifests;
+}
+
+// Get path for a NEW timestamped manifest file
+base::FilePath WootzOfflinePageService::GetNewSessionManifestPath() {
+  base::FilePath storage_dir = GetStorageDir();
+  
+  base::Time now = base::Time::Now();
+  base::Time::Exploded exploded;
+  now.LocalExplode(&exploded);  // Use local time for filename readability
+  
+  std::string filename = base::StringPrintf(
+      "session_manifest_%04d-%02d-%02d_%02d%02d%02d.json",
+      exploded.year, exploded.month, exploded.day_of_month,
+      exploded.hour, exploded.minute, exploded.second);
+  
+  return storage_dir.Append(base::FilePath::FromUTF8Unsafe(filename));
+}
+
+// Get current session's manifest path (cached, or create new timestamped one)
+base::FilePath WootzOfflinePageService::GetCurrentSessionManifestPath() {
+  // If we already have a manifest path for this session, reuse it
+  if (!current_session_manifest_path_.empty() && 
+      base::PathExists(current_session_manifest_path_)) {
+    return current_session_manifest_path_;
+  }
+  
+  // Create a new timestamped manifest path
+  current_session_manifest_path_ = GetNewSessionManifestPath();
+  LOG(INFO) << "Kartik: [MANIFEST] Created new session manifest: " 
+            << current_session_manifest_path_.BaseName().value();
+  
+  return current_session_manifest_path_;
+}
+
+// Save manifest to a specific path
+bool WootzOfflinePageService::SaveSessionManifest(
+    const base::Value::Dict& manifest,
+    const base::FilePath& manifest_path) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  
+  // Convert to JSON string with pretty printing
+  std::string json_string;
+  if (!base::JSONWriter::WriteWithOptions(
+          manifest, base::JSONWriter::OPTIONS_PRETTY_PRINT, &json_string)) {
+    LOG(ERROR) << "Kartik: [MANIFEST] Failed to serialize JSON";
+    return false;
+  }
+  
+  // Write to file
+  if (base::WriteFile(manifest_path, json_string)) {
+    LOG(INFO) << "Kartik: [MANIFEST] Saved: " << manifest_path.BaseName().value()
+              << " (" << json_string.length() << " bytes)";
+    return true;
+  } else {
+    LOG(ERROR) << "Kartik: [MANIFEST] Failed to write file: " 
+               << manifest_path.value();
+    return false;
+  }
+}
+
+// Update the current session's manifest with a new page
+void WootzOfflinePageService::UpdateSessionManifest(
+    const base::FilePath& html_path,
+    const std::vector<GURL>& redirect_chain,
+    int64_t size) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  
+  if (redirect_chain.empty()) {
+    LOG(WARNING) << "Kartik: [MANIFEST] Cannot update with empty redirect chain";
+    return;
+  }
+  
+  LOG(INFO) << "Kartik: [MANIFEST UPDATE] Saving page: " << html_path.BaseName().value();
+  LOG(INFO) << "Kartik: [MANIFEST UPDATE] Redirect chain has " << redirect_chain.size() << " URLs:";
+  for (size_t i = 0; i < redirect_chain.size(); i++) {
+    LOG(INFO) << "Kartik: [MANIFEST UPDATE]   [" << i << "] " << redirect_chain[i].spec();
+  }
+  
+  // Get current session's manifest path (timestamped, cached for this session)
+  base::FilePath manifest_path = GetCurrentSessionManifestPath();
+  
+  // Load existing manifest from this session (or create new one)
+  base::Value::Dict manifest = LoadSingleManifest(manifest_path);
+  if (manifest.empty()) {
+    LOG(INFO) << "Kartik: [MANIFEST] Creating new session manifest";
+    manifest = CreateEmptyManifest();
+  }
+  
+  // Update timestamp
+  base::Time now = base::Time::Now();
+  base::Time::Exploded exploded;
+  now.UTCExplode(&exploded);
+  std::string timestamp = base::StringPrintf(
+      "%04d-%02d-%02dT%02d:%02d:%02dZ",
+      exploded.year, exploded.month, exploded.day_of_month,
+      exploded.hour, exploded.minute, exploded.second);
+  manifest.Set("last_updated", timestamp);
+  
+  // Get filename
+  std::string html_filename = html_path.BaseName().AsUTF8Unsafe();
+  
+  // Get or create url_mappings dict
+  base::Value::Dict* url_mappings = manifest.FindDict("url_mappings");
+  if (!url_mappings) {
+    manifest.Set("url_mappings", base::Value::Dict());
+    url_mappings = manifest.FindDict("url_mappings");
+  }
+  
+  // Get or create pages dict
+  base::Value::Dict* pages = manifest.FindDict("pages");
+  if (!pages) {
+    manifest.Set("pages", base::Value::Dict());
+    pages = manifest.FindDict("pages");
+  }
+  
+  // Add page entry with metadata
+  base::Value::Dict page_info;
+  page_info.Set("primary_url", redirect_chain.back().spec());
+  page_info.Set("saved_at", timestamp);
+  page_info.Set("size_bytes", static_cast<int>(size));
+  
+  // Canonical URL
+  GURL canonical_primary = CanonicalizeUrlForOfflinePage(redirect_chain.back());
+  page_info.Set("canonical_url", canonical_primary.spec());
+  
+  // Redirect chain
+  base::Value::List redirect_list;
+  for (const GURL& url : redirect_chain) {
+    redirect_list.Append(url.spec());
+  }
+  page_info.Set("redirect_chain", std::move(redirect_list));
+  
+  pages->Set(html_filename, std::move(page_info));
+  
+  // TRIPLE MAPPING: Map all URLs in redirect chain to this HTML file
+  // This handles: original URLs, canonical URLs, and subdomain variants
+  std::set<std::string> processed_urls;
+  int mapping_count = 0;
+  
+  for (const GURL& url : redirect_chain) {
+    // 1. Add original URL with all query parameters
+    std::string original_spec = url.spec();
+    if (processed_urls.find(original_spec) == processed_urls.end()) {
+      url_mappings->Set(original_spec, html_filename);
+      processed_urls.insert(original_spec);
+      mapping_count++;
+      LOG(INFO) << "Kartik: URL mapping: " << original_spec << " -> " << html_filename;
+    }
+    
+    // 2. Add canonical URL (normalized - without query params for non-search pages)
+    GURL canonical = CanonicalizeUrlForOfflinePage(url);
+    std::string canonical_spec = canonical.spec();
+    if (processed_urls.find(canonical_spec) == processed_urls.end()) {
+      url_mappings->Set(canonical_spec, html_filename);
+      processed_urls.insert(canonical_spec);
+      mapping_count++;
+      if (canonical_spec != original_spec) {
+        LOG(INFO) << "Kartik: URL mapping (canonical): " << canonical_spec << " -> " << html_filename;
+      }
+    }
+    
+    // 3. Add subdomain variants (www, in, m, mobile, etc.)
+    std::vector<GURL> subdomain_variants = GenerateSubdomainVariants(canonical);
+    for (const GURL& variant : subdomain_variants) {
+      std::string variant_spec = variant.spec();
+      if (processed_urls.find(variant_spec) == processed_urls.end()) {
+        url_mappings->Set(variant_spec, html_filename);
+        processed_urls.insert(variant_spec);
+        mapping_count++;
+        if (variant_spec != canonical_spec && variant_spec != original_spec) {
+          LOG(INFO) << "Kartik: URL mapping (subdomain variant): " << variant_spec << " -> " << html_filename;
+        }
+      }
+    }
+  }
+  
+  // Update page count
+  manifest.Set("page_count", static_cast<int>(pages->size()));
+  
+  // Save updated manifest to current session's manifest file
+  if (SaveSessionManifest(manifest, manifest_path)) {
+    LOG(INFO) << "Kartik: [MANIFEST] Updated with " << mapping_count 
+              << " URL mappings for " << html_filename;
+  }
+}
+
+// Find page path by searching ALL session manifests (supports multi-device)
+bool WootzOfflinePageService::FindPagePathFromSessionManifest(const GURL& url,
+                                                               base::FilePath* path) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  
+  base::FilePath storage_dir = GetStorageDir();
+  if (!base::DirectoryExists(storage_dir)) {
+    return false;
+  }
+  
+  // Load ALL session manifests (from all devices/sessions)
+  std::vector<base::Value::Dict> all_manifests = LoadAllSessionManifests();
+  
+  if (all_manifests.empty()) {
+    LOG(INFO) << "Kartik: [MANIFEST LOOKUP] No valid manifests found";
+    return false;
+  }
+  
+  // Prepare URLs for lookup
+  std::string original_url_spec = url.spec();
+  GURL canonical_url = CanonicalizeUrlForOfflinePage(url);
+  std::string canonical_url_spec = canonical_url.spec();
+  
+  LOG(INFO) << "Kartik: [MANIFEST LOOKUP] Searching " << all_manifests.size() 
+            << " manifest(s) for: " << original_url_spec;
+  if (original_url_spec != canonical_url_spec) {
+    LOG(INFO) << "Kartik: [MANIFEST LOOKUP] Also trying canonical: " << canonical_url_spec;
+  }
+  
+  // Prepare subdomain variants for comprehensive search
+  std::vector<GURL> subdomain_variants = GenerateSubdomainVariants(canonical_url);
+  std::vector<std::string> all_url_variants;
+  all_url_variants.push_back(original_url_spec);
+  if (original_url_spec != canonical_url_spec) {
+    all_url_variants.push_back(canonical_url_spec);
+  }
+  for (const GURL& variant : subdomain_variants) {
+    std::string variant_spec = variant.spec();
+    if (variant_spec != original_url_spec && variant_spec != canonical_url_spec) {
+      all_url_variants.push_back(variant_spec);
+    }
+  }
+  
+  // Search through all manifests
+  int manifest_num = 0;
+  for (const auto& manifest : all_manifests) {
+    manifest_num++;
+    const base::Value::Dict* url_mappings = manifest.FindDict("url_mappings");
+    
+    if (!url_mappings || url_mappings->empty()) {
+      continue;  // Skip empty manifest
+    }
+    
+    // Try all URL variants
+    for (const std::string& url_variant : all_url_variants) {
+      const std::string* html_filename = url_mappings->FindString(url_variant);
+      
+      if (html_filename && !html_filename->empty()) {
+        // Found it! Check if file exists
+        *path = storage_dir.Append(base::FilePath::FromUTF8Unsafe(*html_filename));
+        
+        if (base::PathExists(*path)) {
+          std::string match_desc = (url_variant == original_url_spec) ? "original" :
+                                   (url_variant == canonical_url_spec) ? "canonical" : "subdomain";
+          LOG(INFO) << "Kartik: [MANIFEST LOOKUP] ✓ Found in manifest #" << manifest_num 
+                    << " (" << match_desc << " match): " << *html_filename;
+          return true;
+        } else {
+          LOG(WARNING) << "Kartik: [MANIFEST LOOKUP] Manifest #" << manifest_num 
+                       << " points to non-existent file: " << *html_filename;
+        }
+      }
+    }
+  }
+  
+  LOG(INFO) << "Kartik: [MANIFEST LOOKUP] ✗ URL not found in any of " 
+            << all_manifests.size() << " manifest(s)";
+  return false;
+}
+
+std::vector<GURL> WootzOfflinePageService::GenerateSubdomainVariants(const GURL& url) {
+  std::vector<GURL> variants;
+  
+  if (!url.is_valid() || !url.has_host()) {
+    variants.push_back(url);
+    return variants;
+  }
+  
+  std::string host = url.host();
+  
+  // Common subdomain prefixes to generate variants for
+  std::vector<std::string> common_subdomains = {"www", "m", "mobile", "in"};
+  
+  // Always add the original URL first
+  variants.push_back(url);
+  
+  // Extract base domain (e.g., linkedin.com from www.linkedin.com)
+  size_t first_dot = host.find('.');
+  if (first_dot == std::string::npos) {
+    // No subdomain, just domain.tld - return as-is
+    return variants;
+  }
+  
+  // Check if this already has a subdomain
+  std::string potential_subdomain = host.substr(0, first_dot);
+  std::string base_domain = host.substr(first_dot + 1);
+  
+  // If base domain doesn't have a dot, this is likely domain.tld (no subdomain)
+  if (base_domain.find('.') == std::string::npos) {
+    return variants;
+  }
+  
+  // Generate variants by swapping subdomains
+  for (const std::string& subdomain : common_subdomains) {
+    if (subdomain == potential_subdomain) {
+      continue; // Skip if it's the same as current
+    }
+    
+    std::string variant_host = subdomain + "." + base_domain;
+    GURL::Replacements replacements;
+    replacements.SetHostStr(variant_host);
+    GURL variant_url = url.ReplaceComponents(replacements);
+    
+    if (variant_url.is_valid()) {
+      variants.push_back(variant_url);
+    }
+  }
+  
+  // Also add base domain without subdomain (e.g., linkedin.com)
+  GURL::Replacements replacements;
+  replacements.SetHostStr(base_domain);
+  GURL base_url = url.ReplaceComponents(replacements);
+  if (base_url.is_valid()) {
+    variants.push_back(base_url);
+  }
+  
+  return variants;
 }

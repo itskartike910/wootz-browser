@@ -25,6 +25,7 @@ public class WootzOfflinePagePathUtils {
     private static final String TAG = "Kartik: WootzOfflinePagePathUtils";
     private static final String OFFLINE_PAGES_DIR = "WootzOfflinePages";
     private static final String OFFLINE_404_FILENAME = "wootz_offline_404_page.html";
+    private static final String OFFLINE_NO_RESULT_FILENAME = "wootz_offline_no_result_found.html";
 
     /**
      * Returns the app-specific external storage directory path for offline pages.
@@ -114,29 +115,52 @@ public class WootzOfflinePagePathUtils {
                return -1;
            }
            
-           // Copy all HTML files to the session directory
-           File[] files = sourceDir.listFiles();
-           if (files == null || files.length == 0) {
-               Log.i(TAG, "No files to export");
-               // Delete the empty session directory
-               sessionDir.delete();
-               return 0;
-           }
-           
-           int exportedCount = 0;
-           for (File sourceFile : files) {
-               if (!sourceFile.isFile() || !sourceFile.getName().endsWith(".html")) {
-                   continue;
-               }
-               
-               File targetFile = new File(sessionDir, sourceFile.getName());
-               if (copyFile(sourceFile, targetFile)) {
-                   exportedCount++;
-                   Log.i(TAG, "Exported: " + sourceFile.getName());
-               } else {
-                   Log.e(TAG, "Failed to export: " + sourceFile.getName());
-               }
-           }
+          // Copy all HTML files and the unified session manifest
+          File[] files = sourceDir.listFiles();
+          if (files == null || files.length == 0) {
+              Log.i(TAG, "No files to export");
+              // Delete the empty session directory
+              sessionDir.delete();
+              return 0;
+          }
+          
+          int exportedCount = 0;
+          boolean sessionManifestExported = false;
+          
+          for (File sourceFile : files) {
+              if (!sourceFile.isFile()) {
+                  continue;
+              }
+              
+              String fileName = sourceFile.getName();
+              
+              // Export HTML files and ALL session_manifest*.json files
+              // This supports multi-device/session manifests
+              if (fileName.endsWith(".html")) {
+                  // Export all HTML files (including special pages)
+                  File targetFile = new File(sessionDir, fileName);
+                  if (copyFile(sourceFile, targetFile)) {
+                      exportedCount++;
+                      Log.i(TAG, "Exported HTML: " + fileName);
+                  } else {
+                      Log.e(TAG, "Failed to export HTML: " + fileName);
+                  }
+              } else if (fileName.startsWith("session_manifest") && fileName.endsWith(".json")) {
+                  // Export ALL session manifest files (timestamped manifests from different sessions)
+                  File targetFile = new File(sessionDir, fileName);
+                  if (copyFile(sourceFile, targetFile)) {
+                      exportedCount++;
+                      sessionManifestExported = true;
+                      Log.i(TAG, "Exported manifest: " + fileName);
+                  } else {
+                      Log.e(TAG, "Failed to export manifest: " + fileName);
+                  }
+              }
+          }
+          
+          if (!sessionManifestExported) {
+              Log.w(TAG, "Session manifest was not found or exported");
+          }
            
            Log.i(TAG, "Successfully exported " + exportedCount + " offline pages to " 
                    + sessionDir.getAbsolutePath());
@@ -150,9 +174,10 @@ public class WootzOfflinePagePathUtils {
 
    /**
     * Clears all offline pages from app-specific storage.
-    * Note: The special 404 page is preserved and not deleted.
+    * Deletes all files and subdirectories EXCEPT the special 404 page.
+    * Path: /storage/emulated/0/Android/data/com.wootzapp.web/files/WootzOfflinePages/
     * 
-    * @return Number of files deleted, or -1 on error
+    * @return Number of files/directories deleted, or -1 on error
     */
    @CalledByNative
    public static int clearOfflinePages() {
@@ -172,34 +197,97 @@ public class WootzOfflinePagePathUtils {
                return 0;
            }
            
-           File[] files = offlinePagesDir.listFiles();
-           if (files == null || files.length == 0) {
+           File[] entries = offlinePagesDir.listFiles();
+           if (entries == null || entries.length == 0) {
                Log.i(TAG, "No offline pages to clear");
                return 0;
            }
            
-           int deletedCount = 0;
-           for (File file : files) {
-               // Skip the special 404 page - it should never be deleted
-               if (file.getName().equals(OFFLINE_404_FILENAME)) {
-                   Log.i(TAG, "Preserving special 404 page: " + file.getName());
-                   continue;
-               }
-               
-               if (file.isFile() && file.delete()) {
-                   deletedCount++;
-                   Log.i(TAG, "Deleted: " + file.getName());
-               } else {
-                   Log.e(TAG, "Failed to delete: " + file.getName());
-               }
-           }
+          int deletedCount = 0;
+          for (File entry : entries) {
+              String entryName = entry.getName();
+              
+              // Skip special pages (404 and no result found)
+              // Note: We now use a unified session_manifest.json, so no individual manifest files for special pages
+              if (entryName.equals(OFFLINE_404_FILENAME) || 
+                  entryName.equals(OFFLINE_NO_RESULT_FILENAME)) {
+                  Log.i(TAG, "Preserving special page: " + entryName);
+                  continue;
+              }
+              
+              // Delete files and directories
+              if (entry.isFile()) {
+                  if (entry.delete()) {
+                      deletedCount++;
+                      Log.i(TAG, "Deleted file: " + entryName);
+                  } else {
+                      Log.e(TAG, "Failed to delete file: " + entryName);
+                  }
+              } else if (entry.isDirectory()) {
+                  int dirDeleted = deleteDirectoryRecursive(entry);
+                  if (dirDeleted >= 0) {
+                      deletedCount += dirDeleted;
+                      Log.i(TAG, "Deleted directory: " + entryName + " (" + dirDeleted + " items)");
+                  } else {
+                      Log.e(TAG, "Failed to delete directory: " + entryName);
+                  }
+              }
+          }
            
-           Log.i(TAG, "Cleared " + deletedCount + " offline pages from " 
+           Log.i(TAG, "Cleared " + deletedCount + " items from " 
                    + offlinePagesDir.getAbsolutePath() + " (404 page preserved)");
            return deletedCount;
            
        } catch (Exception e) {
            Log.e(TAG, "Failed to clear offline pages: " + e.getMessage());
+           return -1;
+       }
+   }
+   
+   /**
+    * Recursively deletes a directory and all its contents.
+    * 
+    * @param directory The directory to delete
+    * @return Number of items deleted, or -1 on error
+    */
+   private static int deleteDirectoryRecursive(File directory) {
+       if (!directory.exists()) {
+           return 0;
+       }
+       
+       if (!directory.isDirectory()) {
+           return directory.delete() ? 1 : -1;
+       }
+       
+       int deletedCount = 0;
+       File[] files = directory.listFiles();
+       
+       if (files != null) {
+           for (File file : files) {
+               if (file.isDirectory()) {
+                   int result = deleteDirectoryRecursive(file);
+                   if (result >= 0) {
+                       deletedCount += result;
+                   } else {
+                       return -1;
+                   }
+               } else {
+                   if (file.delete()) {
+                       deletedCount++;
+                   } else {
+                       Log.e(TAG, "Failed to delete file: " + file.getAbsolutePath());
+                       return -1;
+                   }
+               }
+           }
+       }
+       
+       // Delete the directory itself after deleting all contents
+       if (directory.delete()) {
+           deletedCount++;
+           return deletedCount;
+       } else {
+           Log.e(TAG, "Failed to delete directory: " + directory.getAbsolutePath());
            return -1;
        }
    }
@@ -314,10 +402,61 @@ public class WootzOfflinePagePathUtils {
    }
 
    /**
+    * Gets the full path to the "no result found" page for LinkedIn searches.
+    * 
+    * @return Path to no result found page, or null on error
+    */
+   @CalledByNative
+   public static String getNoResultFoundPagePath() {
+       try {
+           Context context = ContextUtils.getApplicationContext();
+           File externalFilesDir = context.getExternalFilesDir(null);
+           
+           if (externalFilesDir == null) {
+               Log.e(TAG, "External storage not available");
+               return null;
+           }
+           
+           File offlinePagesDir = new File(externalFilesDir, OFFLINE_PAGES_DIR);
+           File noResultPage = new File(offlinePagesDir, OFFLINE_NO_RESULT_FILENAME);
+           
+           return noResultPage.getAbsolutePath();
+       } catch (Exception e) {
+           Log.e(TAG, "Failed to get no result found page path: " + e.getMessage());
+           return null;
+       }
+   }
+
+   /**
+    * Checks if the "no result found" page exists.
+    * 
+    * @return true if page exists, false otherwise
+    */
+   @CalledByNative
+   public static boolean doesNoResultFoundPageExist() {
+       try {
+           String path = getNoResultFoundPagePath();
+           if (path == null) {
+               return false;
+           }
+           
+           File noResultPage = new File(path);
+           boolean exists = noResultPage.exists() && noResultPage.isFile();
+           
+           Log.i(TAG, "No result found page exists: " + exists + " at " + path);
+           return exists;
+       } catch (Exception e) {
+           Log.e(TAG, "Failed to check no result found page existence: " + e.getMessage());
+           return false;
+       }
+   }
+
+   /**
     * Searches for an offline page file in subdirectories of WootzOfflinePages.
     * This handles cases where users manually copy exported directories back to app storage.
+    * Also searches manifest files to find pages via redirect mappings.
     * 
-    * @param filename The MHTML filename to search for
+    * @param filename The HTML filename to search for
     * @return Absolute path to the file if found, null otherwise
     */
    @CalledByNative
@@ -355,6 +494,15 @@ public class WootzOfflinePagePathUtils {
                    String foundPath = targetFile.getAbsolutePath();
                    Log.i(TAG, "Found offline page in subdirectory: " + foundPath);
                    return foundPath;
+               }
+               
+               // Also check manifest files in this subdirectory
+               File[] manifestFiles = entry.listFiles((dir, name) -> name.endsWith(".json"));
+               if (manifestFiles != null) {
+                   for (File manifestFile : manifestFiles) {
+                       // Manifests might reference the file we're looking for
+                       Log.d(TAG, "Found manifest in subdirectory: " + manifestFile.getName());
+                   }
                }
                
                // Recursively search nested subdirectories (one level deep)

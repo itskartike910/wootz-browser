@@ -65,7 +65,7 @@ bool WootzMHTMLToHTMLConverter::Convert(const base::FilePath& mhtml_path,
     return false;
   }
   
-  LOG(INFO) << "Kartik: Parsed " << parts.size() << " MHTML parts";
+  // LOG(INFO) << "Kartik: Parsed " << parts.size() << " MHTML parts";
   
   // Build single HTML file
   std::string html = BuildHTML(parts);
@@ -181,8 +181,8 @@ std::vector<MHTMLPart> WootzMHTMLToHTMLConverter::ParseMHTML(
     
     if (!part.content_type.empty()) {
       parts.push_back(part);
-      LOG(INFO) << "Kartik: Parsed part - Type: " << part.content_type
-                << ", Size: " << part.data.length() << " bytes";
+      // LOG(INFO) << "Kartik: Parsed part - Type: " << part.content_type
+      //           << ", Size: " << part.data.length() << " bytes";
     }
     
     pos = next_boundary;
@@ -326,6 +326,245 @@ void WootzMHTMLToHTMLConverter::RewriteLinks(std::string& html) {
   LOG(INFO) << "Kartik: Rewrote " << rewritten_count << " links for offline navigation";
 }
 
+std::string WootzMHTMLToHTMLConverter::GetURLWithoutQuery(const std::string& url) {
+  size_t query_pos = url.find('?');
+  if (query_pos != std::string::npos) {
+    return url.substr(0, query_pos);
+  }
+  return url;
+}
+
+// Replace the ReplaceImageURLsWithQueryVariants function with this enhanced version:
+void WootzMHTMLToHTMLConverter::ReplaceImageURLsWithQueryVariants(
+    std::string& html,
+    const std::string& content_location,
+    const std::string& data_uri) {
+  
+  std::string base_url = GetURLWithoutQuery(content_location);
+  
+  LOG(INFO) << "[IMAGE REPLACE] Looking for base URL: " << base_url;
+  
+  int replaced_count = 0;
+  
+  // 1. Replace <img src="..."> 
+  size_t pos = 0;
+  while ((pos = html.find("<img", pos)) != std::string::npos) {
+    size_t img_end = html.find(">", pos);
+    if (img_end == std::string::npos) break;
+    
+    size_t src_pos = html.find("src=\"", pos);
+    if (src_pos != std::string::npos && src_pos < img_end) {
+      size_t url_start = src_pos + 5;
+      size_t url_end = html.find("\"", url_start);
+      
+      if (url_end != std::string::npos && url_end < img_end) {
+        std::string current_url = html.substr(url_start, url_end - url_start);
+        std::string current_base = GetURLWithoutQuery(current_url);
+        
+        if (current_base == base_url) {
+          html.replace(url_start, current_url.length(), data_uri);
+          replaced_count++;
+          LOG(INFO) << "[IMAGE REPLACE] Replaced <img src>: " << current_url;
+          pos = url_start + data_uri.length();
+          continue;
+        }
+      }
+    }
+    pos = img_end;
+  }
+  
+  // 2. Replace <image href="..."> (SVG)
+  pos = 0;
+  while ((pos = html.find("<image", pos)) != std::string::npos) {
+    size_t img_end = html.find(">", pos);
+    if (img_end == std::string::npos) break;
+    
+    // SVG <image> uses href or xlink:href
+    size_t href_pos = html.find("href=\"", pos);
+    if (href_pos != std::string::npos && href_pos < img_end) {
+      size_t url_start = href_pos + 6;
+      size_t url_end = html.find("\"", url_start);
+      
+      if (url_end != std::string::npos && url_end < img_end) {
+        std::string current_url = html.substr(url_start, url_end - url_start);
+        std::string current_base = GetURLWithoutQuery(current_url);
+        
+        if (current_base == base_url) {
+          html.replace(url_start, current_url.length(), data_uri);
+          replaced_count++;
+          LOG(INFO) << "[IMAGE REPLACE] Replaced <image href>: " << current_url;
+          pos = url_start + data_uri.length();
+          continue;
+        }
+      }
+    }
+    pos = img_end;
+  }
+  
+  // 3. Replace <use href="..."> (SVG symbols)
+  pos = 0;
+  while ((pos = html.find("<use", pos)) != std::string::npos) {
+    size_t use_end = html.find(">", pos);
+    if (use_end == std::string::npos) break;
+    
+    size_t href_pos = html.find("href=\"", pos);
+    if (href_pos != std::string::npos && href_pos < use_end) {
+      size_t url_start = href_pos + 6;
+      size_t url_end = html.find("\"", url_start);
+      
+      if (url_end != std::string::npos && url_end < use_end) {
+        std::string current_url = html.substr(url_start, url_end - url_start);
+        
+        // Skip internal references (e.g., #icon-logo)
+        if (current_url[0] == '#') {
+          pos = use_end;
+          continue;
+        }
+        
+        std::string current_base = GetURLWithoutQuery(current_url);
+        
+        if (current_base == base_url) {
+          html.replace(url_start, current_url.length(), data_uri);
+          replaced_count++;
+          LOG(INFO) << "[IMAGE REPLACE] Replaced <use href>: " << current_url;
+          pos = url_start + data_uri.length();
+          continue;
+        }
+      }
+    }
+    pos = use_end;
+  }
+  
+  // 4. Replace CSS background images: url('...')
+  pos = 0;
+  while ((pos = html.find("url(", pos)) != std::string::npos) {
+    size_t url_start = pos + 4;
+    char quote = '\0';
+    
+    // Check for quotes
+    if (url_start < html.length()) {
+      if (html[url_start] == '"' || html[url_start] == '\'') {
+        quote = html[url_start];
+        url_start++;
+      }
+    }
+    
+    size_t url_end;
+    if (quote) {
+      url_end = html.find(quote, url_start);
+    } else {
+      url_end = html.find(")", url_start);
+    }
+    
+    if (url_end != std::string::npos) {
+      std::string current_url = html.substr(url_start, url_end - url_start);
+      
+      // Skip data URIs and internal references
+      if (current_url.find("data:") == 0 || current_url[0] == '#') {
+        pos = url_end;
+        continue;
+      }
+      
+      std::string current_base = GetURLWithoutQuery(current_url);
+      
+      if (current_base == base_url) {
+        html.replace(url_start, current_url.length(), data_uri);
+        replaced_count++;
+        LOG(INFO) << "[IMAGE REPLACE] Replaced CSS url(): " << current_url;
+        pos = url_start + data_uri.length();
+        continue;
+      }
+    }
+    
+    pos = url_end != std::string::npos ? url_end : pos + 4;
+  }
+  
+  // 5. Replace srcset attribute (responsive images)
+  pos = 0;
+  while ((pos = html.find("srcset=\"", pos)) != std::string::npos) {
+    size_t srcset_start = pos + 8;
+    size_t srcset_end = html.find("\"", srcset_start);
+    
+    if (srcset_end != std::string::npos) {
+      std::string srcset = html.substr(srcset_start, srcset_end - srcset_start);
+      std::string original_srcset = srcset;
+      
+      // srcset can have multiple URLs: "url1 1x, url2 2x"
+      size_t search_pos = 0;
+      while ((search_pos = srcset.find("http", search_pos)) != std::string::npos) {
+        size_t url_end_pos = srcset.find_first_of(" ,", search_pos);
+        if (url_end_pos == std::string::npos) {
+          url_end_pos = srcset.length();
+        }
+        
+        std::string current_url = srcset.substr(search_pos, url_end_pos - search_pos);
+        std::string current_base = GetURLWithoutQuery(current_url);
+        
+        if (current_base == base_url) {
+          // Replace this URL in srcset
+          srcset.replace(search_pos, current_url.length(), data_uri);
+          replaced_count++;
+          LOG(INFO) << "[IMAGE REPLACE] Replaced srcset URL: " << current_url;
+          search_pos += data_uri.length();
+        } else {
+          search_pos = url_end_pos;
+        }
+      }
+      
+      // If we made changes, replace the entire srcset
+      if (srcset != original_srcset) {
+        html.replace(srcset_start, original_srcset.length(), srcset);
+      }
+      
+      pos = srcset_end;
+    } else {
+      break;
+    }
+  }
+  
+  if (replaced_count > 0) {
+    LOG(INFO) << "[IMAGE REPLACE] Successfully replaced " << replaced_count << " image reference(s)";
+  } else {
+    LOG(WARNING) << "[IMAGE REPLACE] No matching images found for: " << base_url;
+    
+    // Fallback: Try exact URL match
+    int exact_count = 0;
+    pos = 0;
+    while ((pos = html.find(content_location, pos)) != std::string::npos) {
+      // Check if this is in an image context (src=, href=, url()
+      bool is_image_context = false;
+      
+      // Look backwards for context
+      if (pos >= 5) {
+        std::string before = html.substr(pos - 5, 5);
+        if (before == "src=\"" || before.find("href=\"") != std::string::npos) {
+          is_image_context = true;
+        }
+      }
+      
+      if (pos >= 4) {
+        std::string before = html.substr(pos - 4, 4);
+        if (before == "url(") {
+          is_image_context = true;
+        }
+      }
+      
+      if (is_image_context) {
+        html.replace(pos, content_location.length(), data_uri);
+        exact_count++;
+        LOG(INFO) << "[IMAGE REPLACE] Replaced via exact match: " << content_location;
+        pos += data_uri.length();
+      } else {
+        pos++;
+      }
+    }
+    
+    if (exact_count > 0) {
+      LOG(INFO) << "[IMAGE REPLACE] Replaced " << exact_count << " image(s) via exact match";
+    }
+  }
+}
+
 // static
 std::string WootzMHTMLToHTMLConverter::BuildHTML(
     const std::vector<MHTMLPart>& parts) {
@@ -390,7 +629,7 @@ std::string WootzMHTMLToHTMLConverter::BuildHTML(
         }
       }
       
-      LOG(INFO) << "Kartik: Inlined CSS part " << i;
+      // LOG(INFO) << "Kartik: Inlined CSS part " << i;
       
     } else if (part.content_type.find("image/") != std::string::npos) {
       // Convert images to data URIs
@@ -401,8 +640,9 @@ std::string WootzMHTMLToHTMLConverter::BuildHTML(
       // Replace references
       if (!part.content_location.empty()) {
         // Replace src="URL" with src="data:..."
-        base::ReplaceSubstringsAfterOffset(&html, 0, part.content_location, data_uri);
-        LOG(INFO) << "Kartik: Replaced image URL: " << part.content_location;
+        ReplaceImageURLsWithQueryVariants(html, part.content_location, data_uri);
+        // base::ReplaceSubstringsAfterOffset(&html, 0, part.content_location, data_uri);
+        // LOG(INFO) << "Kartik: Replaced image URL: " << part.content_location;
       }
       
       if (!part.content_id.empty()) {
@@ -414,15 +654,97 @@ std::string WootzMHTMLToHTMLConverter::BuildHTML(
         
         std::string cid_ref = "cid:" + cid;
         base::ReplaceSubstringsAfterOffset(&html, 0, cid_ref, data_uri);
-        LOG(INFO) << "Kartik: Replaced image CID: " << cid;
+        // LOG(INFO) << "Kartik: Replaced image CID: " << cid;
       }
     }
   }
   
   LOG(INFO) << "Kartik: Final HTML size: " << html.length() << " bytes";
-  LOG(INFO) << "Kartik: Individual page saved with original URLs (no rewriting)";
+  
+  // Add scroll fixes and viewport for better mobile experience
+  AddScrollFixCSS(html);
+  AddViewportMetaTag(html);
+  
+  LOG(INFO) << "Kartik: Individual page saved with scroll fixes and viewport applied";
   
   return html;
+}
+
+// static
+void WootzMHTMLToHTMLConverter::AddScrollFixCSS(std::string& html) {
+  std::string scroll_fix_css = R"(
+    <style>
+      /* Force scrolling on all pages - fixes LinkedIn, ESPN, etc. */
+      html, body {
+        overflow: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+        height: auto !important;
+        position: static !important;
+      }
+      body {
+        width: auto !important;
+        min-height: 100vh !important;
+      }
+      /* Remove blocking iframes and overlays */
+      iframe[src*="linkedin.com/app"],
+      iframe[src*="install"],
+      iframe[src*="download"],
+      div[class*="modal-backdrop"],
+      div[class*="overlay"],
+      div[id*="overlay"] {
+        display: none !important;
+      }
+      /* Ensure content is scrollable */
+      #main, main, [role="main"], .content, #content {
+        overflow: visible !important;
+        height: auto !important;
+      }
+    </style>
+  )";
+  
+  size_t head_end = html.find("</head>");
+  if (head_end != std::string::npos) {
+    html.insert(head_end, scroll_fix_css);
+    LOG(INFO) << "Kartik: Added scroll-fix CSS before </head>";
+  } else {
+    // If no </head>, insert after <html> tag
+    size_t html_tag = html.find("<html");
+    if (html_tag != std::string::npos) {
+      size_t insert_pos = html.find('>', html_tag);
+      if (insert_pos != std::string::npos) {
+        html.insert(insert_pos + 1, "\n<head>" + scroll_fix_css + "</head>\n");
+        LOG(INFO) << "Kartik: Created <head> and added scroll-fix CSS";
+      }
+    }
+  }
+}
+
+// static
+void WootzMHTMLToHTMLConverter::AddViewportMetaTag(std::string& html) {
+  // Check if viewport meta tag already exists
+  if (html.find("name=\"viewport\"") != std::string::npos) {
+    LOG(INFO) << "Kartik: Viewport meta tag already exists, skipping";
+    return;
+  }
+  
+  std::string viewport_meta = 
+      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=yes\">\n";
+  
+  size_t head_start = html.find("<head>");
+  if (head_start != std::string::npos) {
+    html.insert(head_start + 6, "\n" + viewport_meta);
+    LOG(INFO) << "Kartik: Added viewport meta tag";
+  } else {
+    // Try to add after <html> if no <head>
+    size_t html_tag = html.find("<html");
+    if (html_tag != std::string::npos) {
+      size_t insert_pos = html.find('>', html_tag);
+      if (insert_pos != std::string::npos) {
+        html.insert(insert_pos + 1, "\n<head>\n" + viewport_meta + "</head>\n");
+        LOG(INFO) << "Kartik: Created <head> and added viewport meta tag";
+      }
+    }
+  }
 }
 
 }  // namespace wootz_offline_pages
